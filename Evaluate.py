@@ -83,7 +83,7 @@ validloader = DataLoader(
 
 with torch.enable_grad():      
     idx = 0
-    data_idx = 0
+    data_idx = -1
     num_img = 0
     pixel_acc = 0.0
     dice = 0.0
