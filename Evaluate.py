@@ -56,7 +56,8 @@ transform = transforms.Compose([
 ])
 
 validset = ImageNetDataset_val(
-    root_dir='./ILSVRC',
+    # root_dir='./ILSVRC',
+    root_dir='./kaggle/input/ilsvrc/ILSVRC',
     transforms=transform,
 )
 
