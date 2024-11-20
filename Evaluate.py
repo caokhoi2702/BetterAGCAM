@@ -70,7 +70,7 @@ data_file = METHOD + '_sigmoid_data.csv'
 model = ViT_Ours.create_model(MODEL, pretrained=True, num_classes=class_num).to('cuda')
 model.load_state_dict(state_dict, strict=True)
 model.eval()
-method = Better_AGCAM(model)
+method = BetterAGCAM(model)
 
 validloader = DataLoader(
     dataset = validset,
