@@ -7,19 +7,16 @@ import argparse
 import random
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from utils.bounding_box import getBoudingBox_multi, box_to_seg
+from BetterAGCAM.utils.bounding_box import getBoudingBox_multi, box_to_seg
 import torch.utils.model_zoo as model_zoo
 
-#datasets
-from Datasets.ILSVRC import ImageNetDataset_val
 
 #models
-import Methods.AGCAM.ViT_for_AGCAM as ViT_Ours
+import BetterAGCAM.Methods.AGCAM.ViT_for_AGCAM as ViT_Ours
 import timm
 
 #methods    
-from Methods.AGCAM.AGCAM import AGCAM
-from Methods.AGCAM.Better_AGCAM import Better_AGCAM
+from BetterAGCAM.Methods.AGCAM.AGCAM import AGCAM, BetterAGCAM
 
 import csv
 from csv import DictWriter
@@ -94,7 +91,6 @@ with torch.enable_grad():
     fieldnames = ['num_img', 'pixel_acc', 'iou', 'dice', 'precision', 'recall']
     fieldnames_data = ['idx', 'num_img', 'pixel_acc', 'iou', 'dice', 'precision', 'recall']
     
-    # Try to get data from last eval if possible
     try:
         with open(data_file, newline='') as csvfile:
 
@@ -112,74 +108,29 @@ with torch.enable_grad():
         print("[Error] - Can not read from .csv file")
         
     
-        with open(export_file, 'w', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            csvfile.close()
+    with open(export_file, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        csvfile.close()
 
     for data in tqdm(validloader):
         idx+=1
         if (idx <= data_idx):
             continue
-        # if (num_img == 1000):
-        #     break
+        if (idx > 50):
+            break
         image = data['image'].to('cuda')
         label = data['label'].to('cuda')
         bnd_box = data['bnd_box'].to('cuda').squeeze(0)
         
         with torch.enable_grad():
-            prediction, heatmaps, output = method.generate(image)
+            prediction, heatmaps = method.generate(image)
         
         # If the model produces the wrong predication, the heatmap is unreliable and therefore is excluded from the evaluation.
         if prediction!=label:
             continue
 
-        with torch.no_grad():
-            num_layer = heatmaps.size(1)
-            num_head = heatmaps.size(2)
-            sum_heatmap = torch.tensor([]).to(device)
-            
-            #  Get each heatmap of each head in each layer
-            for i in range(num_layer):
-                for j in range(num_head):
-                    
-                    heatmap = heatmaps[0][i][j]
-
-                    # Umpsampling the heatmap
-                    up_heatmap = heatmap.reshape(1, 1, 14, 14)
-                    upsample = torch.nn.Upsample(224, mode = 'bilinear', align_corners=False)
-                    up_heatmap = upsample(up_heatmap)
-
-                    # Normalize the heatmap
-                    norm_heatmap = torch.tensor([])
-                    norm_heatmap = (up_heatmap - up_heatmap.min() + 1e-5)/(up_heatmap.max()-up_heatmap.min() + 1e-5)
-
-                    # Generate new image
-                    new_image = image * norm_heatmap
-
-                    # Calculate the confidence and get the output using the new image
-                    masked_output = model(new_image) 
-                    new_pred = torch.argmax(masked_output, dim = 1 )
-
-                    conf = masked_output - output
-                    conf = conf[0, prediction.item()].to(device) 
-
-                    # Generate new heatap
-                    sum_heatmap = torch.cat((sum_heatmap, conf.unsqueeze(0)), axis = 0)
-                    
-            # Calculate alpha using softmax to get the contribution of each heatmap
-            threshold = 0.5
-            sigmoid_alpha = torch.sigmoid(sum_heatmap)
-            # sigmoid_alpha[sigmoid_alpha < threshold] = 0.0
-            # sigmoid_alpha[sigmoid_alpha >= threshold] = 1.0
-            
-            sigmoid_alpha = sigmoid_alpha.unsqueeze(1).unsqueeze(2).repeat(1, 1, 196)
-            
-            # Get the final heatmap using sigmoid and softmax
-            sigmoid_heatmap = sigmoid_alpha * heatmaps.reshape(num_head * num_layer, 1, 196)
-            sigmoid_heatmap = torch.sum(sigmoid_heatmap, axis = 0)
-
-        mask = sigmoid_heatmap.reshape(1, 1, 14, 14)
+        mask = heatmaps.reshape(1, 1, 14, 14)
             
 
         # Reshape the mask to have the same size with the original input image (224 x 224)
