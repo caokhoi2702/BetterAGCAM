@@ -5,7 +5,7 @@ from torch.autograd import Variable
 import torch.optim as optim
 import numpy as np
 
-class BetterAGCAM:
+class Better_AGCAM:
     """ Implementation of our method."""
     def __init__(self, model, attention_matrix_layer = 'before_softmax', attention_grad_layer = 'after_softmax', head_fusion='sum', layer_fusion='sum'):
         """
@@ -57,14 +57,20 @@ class BetterAGCAM:
         loss.backward()
 
         b, h, n, d = self.attn_matrix[0].shape
+        # b, h, n, d = self.attn_matrix.shape
         self.head=h
         self.width = int((d-1)**0.5)
 
         # put all matrices from each layer into one tensor
         self.attn_matrix.reverse()
         attn = self.attn_matrix[0]
+        # attn = self.attn_matrix
         gradient = self.grad_attn[0]
+        # gradient = self.grad_attn
+        # layer_index = 2
         for i in range(1, len(self.attn_matrix)):
+        # for i in range(layer_index, layer_index+1):
+            # print('hia')
             attn = torch.concat((attn, self.attn_matrix[i]), dim=0)
             gradient = torch.concat((gradient, self.grad_attn[i]), dim=0)
 
@@ -74,31 +80,25 @@ class BetterAGCAM:
         attn = torch.sigmoid(attn) # Here, the variable attn is the attention score matrices newly normalized with sigmoid, which are eqaul to the feature maps F^k_h in Equation 2 in the methodology part.
         mask = gradient * attn
 
-        # aggregation of CAM of all heads and all layers and reshape the final CAM.
-        a_mask = Rearrange('b l hd z (h w)  -> b l hd z h w', h=self.width, w=self.width)(mask[:, :, :, 1:].unsqueeze(0))
-        tensor_heatmaps = a_mask[0]
-        tensor_heatmaps = tensor_heatmaps.reshape(144, 1, 14, 14)
-        tensor_heatmaps = transforms.Resize((224, 224))(tensor_heatmaps)
-        
-        min_vals = tensor_heatmaps.amin(dim=(2, 3), keepdim=True)  # Min across width and height
-        max_vals = tensor_heatmaps.amax(dim=(2, 3), keepdim=True)
-        
-        tensor_heatmaps = (tensor_heatmaps - min_vals + 1e-7) / (max_vals - min_vals + 1e-7)
-        
-        m = torch.mul(tensor_heatmaps, input_tensor)
-        with torch.no_grad():
-            output_mask = self.model.__call__(m)
-            
-        agc_scores = output_mask[:, prediction.item()] - output[0, prediction.item()]
-        # print('score shape: ', agc_scores.shape)
-        agc_scores = torch.sigmoid(agc_scores).reshape(12, 12)
+        # print(f'Masks result: {mask.shape}')
 
-        my_cam = (agc_scores[:, :, None, None, None] * a_mask[0]).sum(axis=(0, 1))
+        # aggregation of CAM of all heads and all layers and reshape the final CAM.
+        mask = mask[:, :, :, 1:].unsqueeze(0) # * niên: chỗ này thêm 1 ở đầu (ví dụ: (2) -> (1, 2)) và 1: là bỏ token class
+        # print(mask.shape)
+
+        # ------------- original -----------------------
+        # mask = Reduce('b l h z p -> b l z p', reduction=self.head_fusion)(mask)
+        # print(mask.shape)
+        # mask = Reduce('b l z p -> b z p', reduction=self.layer_fusion)(mask)
+        # print(mask.shape)
+        # mask = Rerrange('b z (h w) -> b z h w', h=self.width, w=self.width)(mask)
+        # print(mask.shape)
         
-        # sigmoid_mask = torch.from_numpy(my_cam)
-        sigmoid_mask = my_cam.unsqueeze(0)
+        # *Niên:Thay vì tính tổng theo blocks và theo head như công thức để ra 1 mask cuối cùng là CAM thì niên sẽ giữ lại tất cả các mask của các head ở mỗi block
+        mask = Rearrange('b l hd z (h w)  -> b l hd z h w', h=self.width, w=self.width)(mask) # *Niên: chỗ này tách từng token (1, 196) thành từng patch (1, 14, 14)
         
-        return prediction, sigmoid_mask
+        # print(mask.shape)
+        return prediction, mask, output
 
 class AGCAM:
     """ Implementation of our method."""

@@ -67,6 +67,7 @@ METHOD = 'better_agc'
 export_file = METHOD + '_sigmoid_results.csv'
 data_file = METHOD + '_sigmoid_data.csv'
 
+timm_model = timm.create_model(MODEL, pretrained=True, num_classes=class_num).to('cuda')
 model = ViT_Ours.create_model(MODEL, pretrained=True, num_classes=class_num).to('cuda')
 model.load_state_dict(state_dict, strict=True)
 model.eval()
@@ -123,12 +124,32 @@ with torch.enable_grad():
         label = data['label'].to('cuda')
         bnd_box = data['bnd_box'].to('cuda').squeeze(0)
         
-        with torch.enable_grad():
-            prediction, heatmaps = method.generate(image)
-        
-        # If the model produces the wrong predication, the heatmap is unreliable and therefore is excluded from the evaluation.
+        prediction, heatmaps, output = method.generate(image)
+                # If the model produces the wrong predication, the heatmap is unreliable and therefore is excluded from the evaluation.
         if prediction!=label:
             continue
+        tensor_heatmaps = heatmaps[0].reshape(144, 1, 14, 14)
+        tensor_heatmaps = transforms.Resize((224, 224))(tensor_heatmaps)
+        
+        min_vals = tensor_heatmaps.amin(dim=(2, 3), keepdim=True)  # Min across width and height
+        max_vals = tensor_heatmaps.amax(dim=(2, 3), keepdim=True)  # Max across width and height
+
+        tensor_heatmaps = (tensor_heatmaps - min_vals + 1e-7) / (max_vals - min_vals + 1e-7)
+
+        new_image = torch.mul(tensor_heatmaps, image)
+        with torch.no_grad():
+            output_mask = timm_model.__call__(new_image)
+        
+        agc_scores = output_mask[:, prediction.item()] - output[0, prediction.item()]
+        agc_scores = torch.sigmoid(agc_scores)
+        # agc_scores = torch.softmax(agc_scores, axis = 0)
+        agc_scores = agc_scores.reshape(heatmaps[0].shape[0], heatmaps[0].shape[1])
+
+
+        my_cam = (agc_scores[:, :, None, None, None] * heatmaps[0].to(device)).sum(axis=(0, 1))
+        mask = my_cam.unsqueeze(0)
+        
+
 
         mask = heatmaps.reshape(1, 1, 14, 14)
             
